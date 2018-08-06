@@ -1,7 +1,6 @@
 function ref_num = select_ref(img,repnum,echon,threshold)
 % Remove images with artifacts.
 blur = blur_measure(img,repnum,echon,threshold);
-display(blur);
 normal = setdiff(1:10,blur);
 while isempty(normal)
     threshold = threshold - 0.01;
