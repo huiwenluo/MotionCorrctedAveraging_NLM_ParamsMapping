@@ -1,0 +1,485 @@
+warning off
+
+
+%% Set up folder to save results
+MAX_TO_PROCESS = -1;
+SAVE_RESULTS = 1;
+OVERWRITE = 0;
+resultsFolder = ['SHIP_results/'];
+dicomFolder = [resultsFolder 'dicom/'];
+if SAVE_RESULTS == 1
+  mkdir(resultsFolder);
+  mkdir(dicomFolder);
+end
+
+
+%% Set up folder where data is stored
+foldername = '/export/home/dhernando/work/datasets/026_jenskuhn/SHIP_FF/'; %% For Diego's computer
+%foldername = '/Users/kuehnj/Downloads/SHIP_FF/'; %% For Jens' computer
+subfolders = dir([foldername '*']);
+
+while subfolders(1).name(1) == '.'
+  subfolders = subfolders(2:end);
+end
+
+subfolders1 = subfolders;
+
+nte = 3;
+
+%% Set up processing parameters
+df = 210;
+fF = [434.3, 332.1, 485.4, -76.6, 51.1, 249.1]/2*round(df/210);
+relAmps =[0.693, 0.128, 0.087, 0.048, 0.039, 0.004];
+params.deltaF = [0 fF];
+params.relAmps = relAmps;
+params.size_clique = 1;
+params.range_r2 = [0 500];
+params.NUM_R2S = 21;
+params.range_fm = [-400 400]; % Range of field map values
+params.NUM_PSIS = 301; % Number of field map values to discretize
+params.NUM_ITERS = 40; % Number of graph cut iterations
+params.SUBSAMPLE = 2; % Spatial subsampling for field map estimation (for speed)
+params.DO_OT = 1; % 0,1 flag to enable optimization transfer descent (final stage of field map)
+params.LMAP_POWER = 2; % Spatially-varying regularization (2 gives ~ uniformn resolution)
+params.lambda = 0.05; % Regularization parameter
+params.LMAP_EXTRA = 0.05; % More smoothing for low-signal regions
+params.TRY_PERIODIC_RESIDUAL = 0;
+THRESHOLD = 0.04;
+
+tr = 11; %ms
+fa = 10/360*2*pi; %radians
+
+t1f = 343;
+t1w = 586;
+
+mw = (1-exp(-tr/t1w)*cos(fa))/((1-exp(-tr/t1w))*sin(fa));
+mf = (1-exp(-tr/t1f)*cos(fa))/((1-exp(-tr/t1f))*sin(fa));
+
+params.TE = [2.38 4.76 9.52]*1e-3;
+
+
+
+
+imDataParams.TE = params.TE;
+imDataParams.FieldStrength = 1.5;
+imDataParams.PrecessionIsClockwise = -1;
+
+%% Set recon parameters
+algoParams.species(1).name = 'water';
+algoParams.species(1).frequency = 0;
+algoParams.species(1).relAmps = 1;
+algoParams.species(2).name = 'fat';
+algoParams.species(2).frequency = [-3.80, -3.40, -2.60, -1.94, -0.39, 0.60];
+algoParams.species(2).relAmps = [0.087 0.693 0.128 0.004 0.039 0.048];
+
+algoParamsSP = algoParams;
+algoParamsSP.species(2).frequency = [-3.40];
+algoParamsSP.species(2).relAmps = [1];
+
+
+initParams.species(1).name = 'water';
+initParams.species(2).name = 'fat';
+
+num_processed = 0;
+for ksf=1:length(subfolders)
+
+  singlefolder = dir([foldername  subfolders(ksf).name '/*']);
+  while singlefolder(1).name(1) == '.'
+    singlefolder = singlefolder(2:end);
+  end
+  
+  
+  
+  subfolders(ksf).name = [subfolders(ksf).name '/' singlefolder(1).name ];
+
+
+  resultsFile = ['results' subfolders1(ksf).name '.mat'];
+
+  temp = dir([resultsFolder resultsFile]);
+  
+  if MAX_TO_PROCESS<=0 | num_processed<MAX_TO_PROCESS
+    
+    if length(temp)==0 | OVERWRITE==1   
+
+      % Process this dataset
+
+      disp(['Processing ' resultsFile ]);
+      
+      if SAVE_RESULTS==1
+        save([resultsFolder resultsFile],'resultsFile');
+      end
+
+      
+      subsubfolders1 = dir([foldername '/' subfolders(ksf).name]);
+      while subsubfolders1(1).name(1) == '.'
+        subsubfolders1 = subsubfolders1(2:end);
+      end
+
+      for kssf=1:length(subsubfolders1)
+        mynum(kssf) = str2num(subsubfolders1(kssf).name(end-1:end));
+      end
+      [sortnum,isortnum] = sort(mynum);
+      
+      
+      
+      %% Get FFinit
+      subsubfolderFF(1).name = subsubfolders1(isortnum(end)).name;
+      curfolder = [foldername  subfolders(ksf).name '/' subsubfolderFF(1).name '/'];
+      temp = dir(curfolder);
+      fn1 = dir([curfolder '*']);
+      while fn1(1).name(1) == '.'; fn1 = fn1(2:end); end
+      clear im1 di sl;
+      for k=1:length(fn1);
+        di = dicominfo([curfolder fn1(k).name]);
+        im1(:,:,k) = double(dicomread([curfolder fn1(k).name]));
+        sl(k)=di.SliceLocation;
+      end
+      [sl2,isl] = sort(sl);
+      ffinit = 1e-3*im1(:,:,isl);
+
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      %% Get data
+      clear ims;
+      subsubfolders(1).name = subsubfolders1(isortnum(2)).name;
+      subsubfolders(2).name = subsubfolders1(isortnum(1)).name;
+      subsubfolders(3).name = subsubfolders1(isortnum(3)).name;
+      for kssf=1:length(subsubfolders)
+        curfolder = [foldername  subfolders(ksf).name '/' subsubfolders(kssf).name '/'];
+        temp = dir(curfolder);
+        fn1 = dir([curfolder '*']);
+        while fn1(1).name(1) == '.'; fn1 = fn1(2:end); end
+
+        clear im1 di sl;
+        for k=1:length(fn1);
+          di = dicominfo([curfolder fn1(k).name]);
+          im1(:,:,k) = double(dicomread([curfolder fn1(k).name]));
+          sl(k)=di.SliceLocation;
+        end
+
+        [sl2,isl] = sort(sl);
+        
+        ims(:,:,kssf,:) = im1(:,:,isl);
+      end
+      maxS = max(abs(ims(:)));
+      
+      nslices = size(ims,4)
+
+      
+      %% Set up DICOM stuff
+      baseseries = '00';
+      
+      wfolder_u = ['1610' baseseries];
+      ffolder_u = ['1620' baseseries];
+
+      r2folder_u = ['1670' baseseries];
+      r2folder_c = ['1672' baseseries];
+
+      fffolder_u1 = ['1680' baseseries];
+      fffolder_u2 = ['1681' baseseries];
+      fffolder_c1 = ['1682' baseseries];
+      fffolder_c2 = ['1683' baseseries];
+
+      ff0folder_u1 = ['1684' baseseries];
+      ff0folder_u2 = ['1685' baseseries];
+      ff0folder_c1 = ['1686' baseseries];
+      ff0folder_c2 = ['1687' baseseries];
+
+      dicomFolder_w_u = [ dicomFolder subfolders1(ksf).name '/' wfolder_u '/'];
+      dicomFolder_f_u = [ dicomFolder subfolders1(ksf).name '/' ffolder_u '/'];
+
+      dicomFolder_r2_u = [ dicomFolder subfolders1(ksf).name '/' r2folder_u '/'];
+      dicomFolder_r2_c = [ dicomFolder subfolders1(ksf).name '/' r2folder_c '/'];
+
+      dicomFolder_ff_u1 = [ dicomFolder subfolders1(ksf).name '/' fffolder_u1 '/'];
+      dicomFolder_ff_c1 = [ dicomFolder subfolders1(ksf).name '/' fffolder_c1 '/'];
+      dicomFolder_ff_u2 = [ dicomFolder subfolders1(ksf).name '/' fffolder_u2 '/'];
+      dicomFolder_ff_c2 = [ dicomFolder subfolders1(ksf).name '/' fffolder_c2 '/'];
+
+      dicomFolder_ff0_u1 = [ dicomFolder subfolders1(ksf).name '/' ff0folder_u1 '/'];
+      dicomFolder_ff0_c1 = [ dicomFolder subfolders1(ksf).name '/' ff0folder_c1 '/'];
+      dicomFolder_ff0_u2 = [ dicomFolder subfolders1(ksf).name '/' ff0folder_u2 '/'];
+      dicomFolder_ff0_c2 = [ dicomFolder subfolders1(ksf).name '/' ff0folder_c2 '/'];
+
+
+      if SAVE_RESULTS==1
+        mkdir([dicomFolder subfolders1(ksf).name '/']);
+        mkdir([dicomFolder_w_u]);
+        mkdir([dicomFolder_f_u]);
+        
+        mkdir([dicomFolder_r2_u]);
+        mkdir([dicomFolder_r2_c]);
+        
+        mkdir([dicomFolder_ff_u1]);
+        mkdir([dicomFolder_ff_c1]);
+        mkdir([dicomFolder_ff_u2]);
+        mkdir([dicomFolder_ff_c2]);
+
+        mkdir([dicomFolder_ff0_u1]);
+        mkdir([dicomFolder_ff0_c1]);
+        mkdir([dicomFolder_ff0_u2]);
+        mkdir([dicomFolder_ff0_c2]);
+      end
+
+
+
+      clear('magn_*')
+      myslices = 1:nslices;%21:40;
+      for ksl=1:length(myslices)
+        
+        disp(['slice ' num2str(myslices(ksl))])
+        
+        params.images = ims(:,:,:,myslices(ksl));
+
+        
+        
+        tic
+          % "Good" 
+          %    r2init = -log(abs(params.images(:,:,3)./(params.images(:,:,2)+1)))/diff(params.TE(2:3));
+          %    maskfat = r2init>70;
+          winit = (1 - ffinit(:,:,myslices(ksl))).*params.images(:,:,1) + 1;
+          finit = ffinit(:,:,myslices(ksl)).*params.images(:,:,1) + 1;
+          r2init = 20 + 0*params.images(:,:,1);
+
+
+          
+          initParams.r2starmap = r2init;
+          initParams.species(1).amps = winit;
+          initParams.species(2).amps = finit;
+          imDataParams.images = params.images;
+          
+          
+          % Single R2*
+          [outParams] = fwFit_MagnLS_1r2star( imDataParams, algoParams, initParams );
+          w = outParams.species(1).amps;
+          f = outParams.species(2).amps;
+          r2mapFit = outParams.r2starmap;
+          magn_w(:,:,1,ksl) = w;
+          magn_f(:,:,1, ksl) = f;
+          magn_r2map(:,:,1, ksl) = r2mapFit;
+          magn_ff(:,:,1, ksl) = 100*(abs(mf*f))./(abs(mw*w) + abs(mf*f)); % Corrected for T1 effects
+
+          [outParams] = fwFit_MagnLS_1r2star( imDataParams, algoParamsSP, initParams );
+          w = outParams.species(1).amps;
+          f = outParams.species(2).amps;
+          r2mapFit = outParams.r2starmap;
+          magn_w(:,:,2,ksl) = w;
+          magn_f(:,:,2, ksl) = f;
+          magn_r2map(:,:,2, ksl) = r2mapFit;
+          magn_ff(:,:,2, ksl) = 100*(abs(mf*f))./(abs(mw*w) + abs(mf*f)); % Corrected for T1 effects
+
+          
+          % No R2*
+          [outParams] = fwFit_MagnLS_0r2star( imDataParams, algoParams, initParams );
+          w = outParams.species(1).amps;
+          f = outParams.species(2).amps;
+          r2mapFit = outParams.r2starmap;
+          magn_w(:,:,3,ksl) = w;
+          magn_f(:,:,3, ksl) = f;
+          magn_ff(:,:,3, ksl) = 100*(abs(mf*f))./(abs(mw*w) + abs(mf*f)); % Corrected for T1 effects
+
+          [outParams] = fwFit_MagnLS_0r2star( imDataParams, algoParamsSP, initParams );
+          w = outParams.species(1).amps;
+          f = outParams.species(2).amps;
+          r2mapFit = outParams.r2starmap;
+          magn_w(:,:,4,ksl) = w;
+          magn_f(:,:,4, ksl) = f;
+          magn_ff(:,:,4, ksl) = 100*(abs(mf*f))./(abs(mw*w) + abs(mf*f)); % Corrected for T1 effects
+        
+        toc
+        
+        if SAVE_RESULTS==1
+          save([resultsFolder resultsFile],'magn_w','magn_f','magn_r2map','magn_ff','params','myslices','di');
+        
+        
+          curw = magn_w(:,:,:,ksl);
+          curf = magn_f(:,:,:,ksl);
+        
+          ff1 = 100*abs(curf)./(abs(curf) + abs(curw));
+          
+          fatregions = ff1>80;
+          watregions = ff1<20;
+          all_ff = 100*abs(curf)./(abs(curf) + abs(curw));
+          all_ffED = 100*abs(mf*curf)./(abs(mf*curf) + abs(mw*curw));
+          all_ff(watregions) = 100 - 100*abs(curw(watregions))./abs(curf(watregions) + curw(watregions));
+          all_ffED(watregions) = 100 - 100*abs(mw*curw(watregions))./abs(mf*curf(watregions) + mw*curw(watregions));
+          all_ff(fatregions) = 100*abs(curf(fatregions))./abs(curf(fatregions) + curw(fatregions));
+          all_ffED(fatregions) = 100*abs(mf*curf(fatregions))./abs(mf*curf(fatregions) + mw*curw(fatregions));
+          all_ff(all_ff<-100) = -100;
+          all_ff(all_ff>200) = 200;
+          all_ff(isnan(all_ff)) = 0;
+          all_ff(isnan(all_ffED)) = 0;
+          all_ffED(all_ffED<-100) = -100;
+          all_ffED(all_ffED>200) = 200;
+          all_ffED(isnan(all_ffED)) = 0;
+          
+        
+          curw = 2000*curw/maxS;
+          curf = 2000*curf/maxS;
+          
+          dinfo = dicominfo([curfolder fn1(isl(ksl)).name]);
+          
+          dinfo.PatientBirthDate = [];
+          dinfo.PatientGroupLength = [];
+          dinfo.PatientID = [];
+          dinfo.PatientName = [subfolders(ksf).name] ;
+          dinfo.ReferringPhysicianName = [];
+          dinfo.OperatorName = [];
+          dinfo.PatientSex = [];
+          dinfo.PatientWeight = [];
+          dinfo.PatientAge = [];
+          dinfo.InstitutionName = [];
+          dinfo.StationName = [];
+          dinfo.ProtocolName = [];
+          
+          %%%%%%%% Fat fractions
+          dinfo.SmallestImagePixelValue = -1000;
+          dinfo.LargestImagePixelValue = 2000;
+          dinfo.WindowCenter = 500;
+          dinfo.WindowWidth = 1000;
+
+          %% Single R2*: FF, uncorrected, single peak
+          curdicom = [dicomFolder_ff_u1 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(fffolder_u1);
+          dinfo.SeriesDescription = ['Single R2*: Single-peak, T1-uncorrected: FF (x 10)'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_ff_u1];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(10*all_ff(:,:,2)), curdicom, dinfo);
+
+          %% Single R2*: FF, uncorrected, multi peak
+          curdicom = [dicomFolder_ff_u2 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(fffolder_u2);
+          dinfo.SeriesDescription = ['Single R2*: Single-peak, T1-corrected: FF (x 10)'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_ff_u2];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(10*all_ffED(:,:,2)), curdicom, dinfo);
+          
+          %% Single R2*: FF, uncorrected, single peak
+          curdicom = [dicomFolder_ff_c1 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(fffolder_c1);
+          dinfo.SeriesDescription = ['Single R2*: Multi-peak, T1-uncorrected: FF (x 10)'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_ff_c1];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(10*all_ff(:,:,1)), curdicom, dinfo);
+
+          %% Single R2*: FF, corrected, multi peak
+          curdicom = [dicomFolder_ff_c2 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(fffolder_c2);
+          dinfo.SeriesDescription = ['Single R2*: Multi-peak, T1-corrected: FF (x 10)'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_ff_c2];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(10*all_ffED(:,:,1)), curdicom, dinfo);
+
+          
+          %% No R2*: FF, uncorrected, single peak
+          curdicom = [dicomFolder_ff0_u1 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(ff0folder_u1);
+          dinfo.SeriesDescription = ['No R2*: Single-peak, T1-uncorrected: FF (x 10)'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_ff0_u1];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(10*all_ff(:,:,4)), curdicom, dinfo);
+
+          %% No R2*: FF, uncorrected, multi peak
+          curdicom = [dicomFolder_ff0_u2 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(ff0folder_u2);
+          dinfo.SeriesDescription = ['No R2*: Single-peak, T1-corrected: FF (x 10)'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_ff0_u2];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(10*all_ffED(:,:,4)), curdicom, dinfo);
+          
+          %% No R2*: FF, uncorrected, single peak
+          curdicom = [dicomFolder_ff0_c1 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(ff0folder_c1);
+          dinfo.SeriesDescription = ['No R2*: Multi-peak, T1-uncorrected: FF (x 10)'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_ff0_c1];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(10*all_ff(:,:,3)), curdicom, dinfo);
+
+          %% No R2*: FF, corrected, multi peak
+          curdicom = [dicomFolder_ff0_c2 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(ff0folder_c2);
+          dinfo.SeriesDescription = ['No R2*: Multi-peak, T1-corrected: FF (x 10)'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_ff0_c2];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(10*all_ffED(:,:,3)), curdicom, dinfo);
+
+
+          %%%%%%%% R2*
+          dinfo.SmallestImagePixelValue = -50;
+          dinfo.LargestImagePixelValue = 500;
+          dinfo.WindowCenter = 35;
+          dinfo.WindowWidth = 70;
+
+          %% R2*, singlepeak
+          curdicom = [dicomFolder_r2_u 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(r2folder_u);
+          dinfo.SeriesDescription = ['Single-peak: R2*'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_r2_u];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(magn_r2map(:,:,2,ksl)), curdicom, dinfo);
+          
+          %% R2*, multipeak
+          curdicom = [dicomFolder_r2_c 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(r2folder_c);
+          dinfo.SeriesDescription = ['Multi-peak: R2*'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_r2_c];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(int16(magn_r2map(:,:,1,ksl)), curdicom, dinfo);
+
+
+
+          %%%%%%%% Water and fat
+          dinfo.SmallestImagePixelValue = 0;
+          dinfo.LargestImagePixelValue = maxS;
+          dinfo.WindowCenter = 350;
+          dinfo.WindowWidth = 700;
+          
+          %% W, uncorrected
+          curdicom = [dicomFolder_w_u 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(wfolder_u);
+          dinfo.SeriesDescription = ['Single R2* MP: Water'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_w_u];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(uint16(abs(curw(:,:,1))), curdicom, dinfo);
+          
+          %% F, uncorrected
+          curdicom = [dicomFolder_f_u 'I0' num2str(ksl,'%0.3d') '.dcm'];
+          dinfo.SeriesNumber = str2num(ffolder_u);
+          dinfo.SeriesDescription = ['Single R2* MP: Fat'];
+          dinfo.Filename =  curdicom;
+          dinfo.SeriesInstanceUID = [dinfo.SeriesNumber dicomFolder_f_u];
+          dinfo.AccessionNumber = num2str(dinfo.SeriesNumber);
+          dicomwrite(uint16(abs(curf(:,:,1))), curdicom, dinfo);
+        
+        
+        
+        
+        end
+        
+      end
+    end
+
+  end
+end
+
+
+warning on
